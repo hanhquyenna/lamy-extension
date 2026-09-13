@@ -2,10 +2,9 @@
  * Lamy's management page — one page per user, reached ONLY by a signed
  * expiring magic link the agent mints (lamy__link). No passwords, no signup.
  *
- * Same tables the agent uses (lamy_* in the shared Supabase project), so chat
- * and page can never drift into two truths; fit scores come from the SAME
- * scoreRole the agent runs (./lamy-scoring.ts). Every write here logs to
- * lamy_events like every agent write does.
+ * The local SQLite file is the source of truth for this standalone copy; fit
+ * scores come from the same scoreRole implementation used by the worker.
+ * Every write here logs to lamy_events.
  *
  * Auth model: /b/<token> where token = base64url("user.exp") + "." + HMAC.
  * A valid token becomes an HttpOnly cookie; every request re-verifies it, so
@@ -13,47 +12,37 @@
  * the re-login. Confirming a bank entry on this page IS explicit human
  * confirmation — the one way an entry may become 'confirmed'.
  *
- * Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, LAMY_LINK_SECRET (or
- * LAMY_LINK_SECRET_FILE), PORT (default 8790). Run: ./run.sh
+ * Env: LAMY_LINK_SECRET (or LAMY_LINK_SECRET_FILE), LAMY_DB_PATH (optional),
+ * HOST and PORT (default 127.0.0.1:8790). Run: ./run.sh
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { scoreRole, type BankRow, type RoleRow } from "./lamy-scoring.ts";
 import { computeCap } from "./lamy-cap.ts";
+import {
+  listApplications,
+  listBank,
+  listOpenAsks,
+  listRoles,
+  logEvent,
+  outreachHistory,
+  queuedCount,
+  leaseNext,
+  report,
+  resolveAsk,
+  updateBankState,
+  userByWorkerToken,
+} from "./db.ts";
 
-const SUPABASE_URL = (process.env.SUPABASE_URL ?? "").replace(/\/$/, "");
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const SECRET =
   process.env.LAMY_LINK_SECRET ??
   (process.env.LAMY_LINK_SECRET_FILE
     ? (await Bun.file(process.env.LAMY_LINK_SECRET_FILE).text()).trim()
     : "");
 const PORT = Number(process.env.PORT ?? 8790);
-if (!SUPABASE_URL || !SUPABASE_KEY || !SECRET) {
-  console.error("need SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, LAMY_LINK_SECRET");
+if (!SECRET) {
+  console.error("need LAMY_LINK_SECRET (generate one with: openssl rand -hex 32)");
   process.exit(1);
 }
-
-// --- db ---------------------------------------------------------------------
-async function db<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    ...init,
-    headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=representation",
-      ...(init?.headers ?? {}),
-    },
-  });
-  const body = await r.text();
-  if (!r.ok) throw new Error(`supabase ${path} -> ${r.status}: ${body.slice(0, 200)}`);
-  return (body ? JSON.parse(body) : undefined) as T;
-}
-const logEvent = (user: string, kind: string, detail: string) =>
-  db("lamy_events", {
-    method: "POST",
-    body: JSON.stringify({ user_id: user, kind, detail }),
-  }).catch(() => {});
 
 // --- auth -------------------------------------------------------------------
 function verifyToken(token: string | undefined): string | null {
@@ -133,12 +122,11 @@ setTimeout(() => location.reload(), 60000);
 const STAGES = ["sourced", "profiled", "scored", "tailored", "gated", "ready", "submitted", "answered"] as const;
 
 async function renderHome(user: string): Promise<string> {
-  const u = encodeURIComponent(user);
   const [bank, roles, asks, apps] = await Promise.all([
-    db<BankRow[]>(`lamy_bank?user_id=eq.${u}&order=id`),
-    db<RoleRow[]>(`lamy_roles?user_id=eq.${u}&order=id`),
-    db<any[]>(`lamy_asks?user_id=eq.${u}&status=eq.open&order=id`),
-    db<any[]>(`lamy_applications?user_id=eq.${u}&order=id.desc`),
+    Promise.resolve(listBank(user) as BankRow[]),
+    Promise.resolve(listRoles(user) as RoleRow[]),
+    Promise.resolve(listOpenAsks(user)),
+    Promise.resolve(listApplications(user)),
   ]);
 
   const stateTag = (s: string) =>
@@ -231,6 +219,11 @@ Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
+    if (req.method === "GET" && url.pathname === "/healthz")
+      return new Response(JSON.stringify({ ok: true, database: "local" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+
     const m = /^\/b\/(.+)$/.exec(url.pathname);
     if (m) {
       const user = verifyToken(decodeURIComponent(m[1]));
@@ -270,24 +263,15 @@ Bun.serve({
       const tok = String(body.token ?? "");
       if (!/^lw_[0-9a-f]{48}$/.test(tok))
         return new Response(JSON.stringify({ error: "bad token" }), { status: 401, headers: cors });
-      const users = await db<any[]>(
-        `lamy_users?worker_token=eq.${encodeURIComponent(tok)}&select=id,display_name,linkedin_restricted`,
-      );
-      const wu = users[0];
+      const wu = userByWorkerToken(tok);
       if (!wu)
         return new Response(JSON.stringify({ error: "unknown token" }), { status: 401, headers: cors });
-      const uq = encodeURIComponent(wu.id);
 
       if (url.pathname === "/api/worker/hello") {
-        const history = await db<{ at: string }[]>(
-          `lamy_outreach?user_id=eq.${uq}&select=at&order=at.desc&limit=500`,
-        );
-        const cap = computeCap(history, !!wu.linkedin_restricted);
-        const queued = await db<any[]>(
-          `lamy_worker_queue?user_id=eq.${uq}&status=eq.queued&select=id`,
-        );
+        const cap = computeCap(outreachHistory(wu.id), wu.linkedin_restricted);
+        const queued = queuedCount(wu.id);
         return new Response(
-          JSON.stringify({ user: wu.id, queued: queued.length, cap }),
+          JSON.stringify({ user: wu.id, queued, cap }),
           { headers: cors },
         );
       }
@@ -296,42 +280,26 @@ Bun.serve({
         const kinds = Array.isArray(body.kinds) && body.kinds.length
           ? body.kinds.map(String)
           : ["fetch_job"];
-        const leased = await db<any[]>("rpc/lamy_worker_lease", {
-          method: "POST",
-          body: JSON.stringify({ p_user: wu.id, p_kinds: kinds }),
+        const leased = leaseNext(wu.id, kinds, (_item, user) => {
+          const cap = computeCap(outreachHistory(user.id), user.linkedin_restricted);
+          return cap.used_today >= cap.today_cap ? { allowed: false, cap } : { allowed: true, cap };
         });
-        const item = leased[0];
+        const item = leased.item;
         if (!item) return new Response(JSON.stringify({ none: true }), { headers: cors });
+
+        if (leased.refused) {
+          logEvent(wu.id, "outreach_refused", `${item.kind} (worker, cap reached)`);
+          return new Response(
+            JSON.stringify({ none: true, cap_reached: true, cap: leased.cap }),
+            { headers: cors },
+          );
+        }
 
         if (item.kind === "connect" || item.kind === "message") {
           // The atomic outreach gate fires at EXECUTION time — here. A refusal
           // returns the item to the queue for tomorrow; the extension is told
           // to stop asking today.
-          const history = await db<{ at: string }[]>(
-            `lamy_outreach?user_id=eq.${uq}&select=at&order=at.desc&limit=500`,
-          );
-          const cap = computeCap(history, !!wu.linkedin_restricted);
-          const gate = await db<any>("rpc/lamy_outreach_log", {
-            method: "POST",
-            body: JSON.stringify({
-              p_user: wu.id,
-              p_kind: item.kind,
-              p_target: String(item.payload?.target ?? ""),
-              p_cap: cap.today_cap,
-            }),
-          });
-          if (!gate?.allowed) {
-            await db(`lamy_worker_queue?id=eq.${item.id}&status=eq.leased`, {
-              method: "PATCH",
-              body: JSON.stringify({ status: "queued", leased_at: null }),
-            });
-            await logEvent(wu.id, "outreach_refused", `${item.kind} (worker, cap ${cap.today_cap})`);
-            return new Response(
-              JSON.stringify({ none: true, cap_reached: true, cap }),
-              { headers: cors },
-            );
-          }
-          await logEvent(wu.id, "outreach_logged", `${item.kind} ${String(item.payload?.target ?? "").slice(0, 60)} (worker)`);
+          logEvent(wu.id, "outreach_logged", `${item.kind} ${String(item.payload?.target ?? "").slice(0, 60)} (worker)`);
         }
         return new Response(JSON.stringify({ item }), { headers: cors });
       }
@@ -339,23 +307,11 @@ Bun.serve({
       if (url.pathname === "/api/worker/report") {
         const id = Number(body.id);
         if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers: cors });
-        const status = body.ok ? "done" : "failed";
         // Guarded: only a currently-leased item can be reported.
-        const won = await db<any[]>(
-          `lamy_worker_queue?id=eq.${id}&user_id=eq.${uq}&status=eq.leased`,
-          {
-            method: "PATCH",
-            body: JSON.stringify({
-              status,
-              result: body.result ?? null,
-              finished_at: new Date().toISOString(),
-            }),
-          },
-        );
-        if (won.length)
-          await logEvent(wu.id, `worker_${status}`, `#${id} ${won[0].kind}`);
+        const outcome = report(wu.id, id, Boolean(body.ok), body.result ?? null);
+        if (outcome.changed) logEvent(wu.id, `worker_${outcome.status}`, `#${id}`);
         return new Response(
-          JSON.stringify(won.length ? { recorded: id, status } : { recorded: false, note: "not leased — nothing changed" }),
+          JSON.stringify(outcome.changed ? { recorded: id, status: outcome.status } : { recorded: false, note: "not leased — nothing changed" }),
           { headers: cors },
         );
       }
@@ -370,7 +326,6 @@ Bun.serve({
       });
 
     if (req.method === "POST") {
-      const uq = encodeURIComponent(user);
       let mm = /^\/bank\/(\d+)\/(confirm|stale)$/.exec(url.pathname);
       if (mm) {
         const state = mm[2] === "confirm" ? "confirmed" : "stale";
@@ -378,22 +333,14 @@ Bun.serve({
         // button applies to — chat or the sheet sync may have won meanwhile.
         // Zero rows back means the redirect simply re-renders the newer
         // truth; no phantom event is logged.
-        const guard = state === "confirmed" ? "&state=eq.inferred" : "&state=neq.stale";
-        const rows = await db<any[]>(`lamy_bank?user_id=eq.${uq}&id=eq.${mm[1]}${guard}`, {
-          method: "PATCH",
-          body: JSON.stringify({ state, updated_at: new Date().toISOString() }),
-        });
-        if (rows.length)
-          await logEvent(user, `bank_${state}`, `#${mm[1]} (web)`);
+        const changed = updateBankState(user, Number(mm[1]), state);
+        if (changed) logEvent(user, `bank_${state}`, `#${mm[1]} (web)`);
         return redirect("/");
       }
       mm = /^\/ask\/(\d+)\/(skipped|never)$/.exec(url.pathname);
       if (mm) {
-        const rows = await db<any[]>(`lamy_asks?user_id=eq.${uq}&id=eq.${mm[1]}&status=eq.open`, {
-          method: "PATCH",
-          body: JSON.stringify({ status: mm[2], resolved_at: new Date().toISOString() }),
-        });
-        if (rows.length) await logEvent(user, `ask_${mm[2]}`, `#${mm[1]} (web)`);
+        const changed = resolveAsk(user, Number(mm[1]), mm[2] as "skipped" | "never");
+        if (changed) logEvent(user, `ask_${mm[2]}`, `#${mm[1]} (web)`);
         return redirect("/");
       }
     }

@@ -5,9 +5,8 @@
  *
  * Judgment tunes WHERE inside 0..HARD_CEILING a user sits today; nothing —
  * no signal, no user request, no agent — raises the ceiling itself. The cap
- * is advisory input to the ATOMIC Postgres gate (rpc/lamy_outreach_log,
- * advisory-locked count+insert); enforcement always happens there, never in
- * TS state.
+ * is enforced in the SQLite transaction that leases outreach work, so a
+ * second worker cannot race past the limit.
  */
 
 export const HARD_CEILING = 10;

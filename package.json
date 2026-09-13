@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "./run.sh",
-    "check": "bun build backend/server.ts --target=bun --outdir=/tmp/lamy-extension-check && node --check background.js && node --check popup.js && node -e \"JSON.parse(require('fs').readFileSync('manifest.json','utf8')); console.log('manifest ok')\""
+    "pair": "bun pair.ts",
+    "queue": "bun queue.ts",
+    "check": "bun build backend/server.ts --target=bun --outdir=/tmp/lamy-extension-check && bun build pair.ts --target=bun --outdir=/tmp/lamy-extension-pair-check && bun build queue.ts --target=bun --outdir=/tmp/lamy-extension-queue-check && node --check background.js && node --check popup.js && node -e \"JSON.parse(require('fs').readFileSync('manifest.json','utf8')); console.log('manifest ok')\""
   }
 }
