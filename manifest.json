@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lamy Worker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lamy's hands in your own browser. Executes only what you queued in chat, at a human pace, using your own session. Never acts on its own.",
   "permissions": ["storage", "alarms"],
   "host_permissions": [
