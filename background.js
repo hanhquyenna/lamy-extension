@@ -13,7 +13,8 @@ const KINDS = ["fetch_job"];
 
 async function cfg() {
   const { base, token } = await chrome.storage.local.get(["base", "token"]);
-  return base && token ? { base: base.replace(/\/$/, ""), token } : null;
+  const effectiveBase = base || "http://127.0.0.1:8790";
+  return token ? { base: effectiveBase.replace(/\/$/, ""), token } : null;
 }
 
 async function api(c, path, body) {

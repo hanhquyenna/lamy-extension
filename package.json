@@ -1,0 +1,9 @@
+{
+  "name": "lamy-extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "./run.sh",
+    "check": "bun build backend/server.ts --target=bun --outdir=/tmp/lamy-extension-check && node --check background.js && node --check popup.js && node -e \"JSON.parse(require('fs').readFileSync('manifest.json','utf8')); console.log('manifest ok')\""
+  }
+}

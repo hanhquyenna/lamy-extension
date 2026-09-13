@@ -1,12 +1,13 @@
 async function refresh() {
   const { base, token, last } = await chrome.storage.local.get(["base", "token", "last"]);
-  if (base) document.getElementById("base").value = base;
+  const effectiveBase = base || "http://127.0.0.1:8790";
+  document.getElementById("base").value = effectiveBase;
   if (token) document.getElementById("token").value = token;
   const s = document.getElementById("status");
-  if (!base || !token) { s.textContent = "not configured"; return; }
+  if (!token) { s.textContent = "enter your pairing token"; return; }
   s.textContent = (last ?? "no check-in yet") + "\nfetching status...";
   try {
-    const r = await fetch(`${base.replace(/\/$/, "")}/api/worker/hello`, {
+    const r = await fetch(`${effectiveBase.replace(/\/$/, "")}/api/worker/hello`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),
