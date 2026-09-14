@@ -116,8 +116,10 @@ async function tick() {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   chrome.alarms.create("lamy-poll", { periodInMinutes: 1 });
 });
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "lamy-poll") tick();
 });
