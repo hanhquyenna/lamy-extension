@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Lamy Worker",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Lamy's hands in your own browser. Executes only what you queued in chat, at a human pace, using your own session. Never acts on its own.",
-  "permissions": ["storage", "alarms"],
+  "permissions": ["storage", "alarms", "sidePanel"],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "http://127.0.0.1:8790/*",
@@ -11,5 +11,6 @@
     "https://*.trycloudflare.com/*"
   ],
   "background": { "service_worker": "background.js" },
-  "action": { "default_popup": "popup.html" }
+  "action": { "default_popup": "popup.html" },
+  "side_panel": { "default_path": "sidepanel.html" }
 }

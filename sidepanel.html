@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lamy Worker</title>
+  <style>
+    :root{color-scheme:light}*{box-sizing:border-box}
+    body{font:14px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:20px;color:#1a1a1a;background:#fff}
+    h1{font-size:20px;margin:0 0 8px;color:#202124}
+    .intro{color:#666;margin:0 0 20px}
+    label{display:block;margin:14px 0 5px;color:#555;font-size:13px;font-weight:600}
+    input{width:100%;padding:9px 10px;border:1px solid #d9d9d9;border-radius:7px;font:inherit}
+    input:focus{outline:2px solid #9bb7d9;border-color:#3d5a80}
+    button{margin-top:16px;background:#3d5a80;color:#fff;border:0;border-radius:7px;padding:9px 14px;font:600 14px inherit;cursor:pointer}
+    #status{margin-top:16px;padding:12px;background:#f4f4f2;border-radius:8px;white-space:pre-wrap;color:#333;min-height:52px}
+    .hint{margin-top:18px;color:#777;font-size:12px}
+  </style>
+</head>
+<body>
+  <h1>Lamy Worker</h1>
+  <p class="intro">Runs only queued work in your browser, at a careful pace.</p>
+  <label for="base">Server address</label>
+  <input id="base" value="http://127.0.0.1:8790" placeholder="http://127.0.0.1:8790">
+  <label for="token">Pairing token</label>
+  <input id="token" placeholder="lw_..." autocomplete="off">
+  <button id="save" type="button">Save and check in</button>
+  <div id="status">enter your pairing token</div>
+  <p class="hint">Keep this side panel open while you work. It checks the local worker and shows queued actions.</p>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -39,7 +39,9 @@ Requirement: [Bun](https://bun.sh).
 
 4. In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select this repository folder. In the Lamy popup, leave the server address as `http://127.0.0.1:8790` and paste the pairing token.
 
-5. To test a queued job without a chat agent, queue a URL from another terminal:
+5. Open the persistent panel from Chrome's **Side panel** button, then choose **Lamy Worker**. The toolbar popup remains available too.
+
+6. To test a queued job without a chat agent, queue a URL from another terminal:
 
    ```sh
    bun run queue -- --user friend --url https://www.linkedin.com/jobs/view/123456789/
